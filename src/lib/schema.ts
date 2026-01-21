@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, boolean, index } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, boolean, index, integer, jsonb, uuid } from "drizzle-orm/pg-core";
 
 // IMPORTANT! ID fields should ALWAYS use UUID types, EXCEPT the BetterAuth tables.
 
@@ -80,3 +80,23 @@ export const verification = pgTable("verification", {
     .$onUpdate(() => /* @__PURE__ */ new Date())
     .notNull(),
 });
+
+// Workout tracking table for AI Gym Coach
+export const workout = pgTable(
+  "workout",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id").references(() => user.id, { onDelete: "cascade" }), // nullable for guest display
+    exerciseType: text("exercise_type").notNull(), // "squat" | "deadlift"
+    totalReps: integer("total_reps").notNull().default(0),
+    goodFormReps: integer("good_form_reps").notNull().default(0),
+    badFormReps: integer("bad_form_reps").notNull().default(0),
+    durationSeconds: integer("duration_seconds").notNull().default(0),
+    mistakes: jsonb("mistakes").$type<string[]>().default([]),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("workout_user_id_idx").on(table.userId),
+    index("workout_created_at_idx").on(table.createdAt),
+  ]
+);

@@ -1,15 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { Lock } from "lucide-react";
+import { Lock, Dumbbell, History } from "lucide-react";
 import { UserProfile } from "@/components/auth/user-profile";
 import { Button } from "@/components/ui/button";
-import { useDiagnostics } from "@/hooks/use-diagnostics";
 import { useSession } from "@/lib/auth-client";
 
 export default function DashboardPage() {
   const { data: session, isPending } = useSession();
-  const { isAiReady, loading: diagnosticsLoading } = useDiagnostics();
 
   if (isPending) {
     return (
@@ -44,19 +42,29 @@ export default function DashboardPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="p-6 border border-border rounded-lg">
-          <h2 className="text-xl font-semibold mb-2">AI Chat</h2>
+          <h2 className="text-xl font-semibold mb-2 flex items-center gap-2">
+            <Dumbbell className="h-5 w-5" />
+            Start Workout
+          </h2>
           <p className="text-muted-foreground mb-4">
-            Start a conversation with AI using the Vercel AI SDK
+            Begin a new squat or deadlift session with AI-powered form analysis
           </p>
-          {(diagnosticsLoading || !isAiReady) ? (
-            <Button disabled={true}>
-              Go to Chat
-            </Button>
-          ) : (
-            <Button asChild>
-              <Link href="/chat">Go to Chat</Link>
-            </Button>
-          )}
+          <Button asChild>
+            <Link href="/workout">Start Workout</Link>
+          </Button>
+        </div>
+
+        <div className="p-6 border border-border rounded-lg">
+          <h2 className="text-xl font-semibold mb-2 flex items-center gap-2">
+            <History className="h-5 w-5" />
+            Workout History
+          </h2>
+          <p className="text-muted-foreground mb-4">
+            View your past workouts and track your progress
+          </p>
+          <Button asChild variant="outline">
+            <Link href="/history">View History</Link>
+          </Button>
         </div>
 
         <div className="p-6 border border-border rounded-lg">
