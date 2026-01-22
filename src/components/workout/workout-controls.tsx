@@ -24,7 +24,7 @@ export function WorkoutControls({
 }: WorkoutControlsProps) {
   if (!isActive) {
     return (
-      <div className={cn("flex justify-center gap-4", className)}>
+      <div data-tour="workout-controls" className={cn("flex justify-center gap-4", className)}>
         <Button size="lg" onClick={onStart} className="text-lg px-8 py-6">
           Start Workout
         </Button>
@@ -33,7 +33,7 @@ export function WorkoutControls({
   }
 
   return (
-    <div className={cn("flex justify-center gap-4", className)}>
+    <div data-tour="workout-controls" className={cn("flex justify-center gap-4", className)}>
       {isPaused ? (
         <Button
           size="lg"

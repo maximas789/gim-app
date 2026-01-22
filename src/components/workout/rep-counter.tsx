@@ -19,6 +19,7 @@ export function RepCounter({
 }: RepCounterProps) {
   return (
     <div
+      data-tour="rep-counter"
       className={cn(
         "bg-background/80 backdrop-blur-sm rounded-lg p-4 shadow-lg",
         className
