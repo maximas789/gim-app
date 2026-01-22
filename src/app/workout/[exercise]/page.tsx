@@ -69,8 +69,9 @@ function WorkoutContent({ exercise }: WorkoutContentProps) {
   const animationRef = useRef<number | null>(null);
   const lastDetectionRef = useRef<number>(0);
 
-  // Track previous rep count for voice feedback
+  // Track previous counts for voice feedback
   const prevRepCountRef = useRef(0);
+  const prevGoodFormCountRef = useRef(0);
 
   // Handle video dimensions
   useEffect(() => {
@@ -135,10 +136,12 @@ function WorkoutContent({ exercise }: WorkoutContentProps) {
   // Voice feedback when rep completes
   useEffect(() => {
     if (repCount > prevRepCountRef.current) {
-      const wasGoodForm = goodFormCount > (prevRepCountRef.current > 0 ? prevRepCountRef.current - (goodFormCount - 1) : 0);
+      // Check if good form count increased - if so, this rep was good form
+      const wasGoodForm = goodFormCount > prevGoodFormCountRef.current;
       speakRepComplete(wasGoodForm);
     }
     prevRepCountRef.current = repCount;
+    prevGoodFormCountRef.current = goodFormCount;
   }, [repCount, goodFormCount, speakRepComplete]);
 
   // Handle pause
