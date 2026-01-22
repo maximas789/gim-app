@@ -1,13 +1,20 @@
 "use client";
 
-import { use, useEffect, useRef, useCallback, useState } from "react";
+import { use, useEffect, useCallback, useState } from "react";
 import Link from "next/link";
 import { useRouter, notFound } from "next/navigation";
-import { ArrowLeft, Volume2, VolumeX, Loader2 } from "lucide-react";
+import {
+  ArrowLeft,
+  Mic,
+  MicOff,
+  Wifi,
+  WifiOff,
+  Loader2,
+  Plus,
+  Minus,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CameraView } from "@/components/workout/camera-view";
-import { FormIndicator } from "@/components/workout/form-indicator";
-import { PoseOverlay } from "@/components/workout/pose-overlay";
 import { RepCounter } from "@/components/workout/rep-counter";
 import { WorkoutControls } from "@/components/workout/workout-controls";
 import {
@@ -17,9 +24,7 @@ import {
   type ExerciseType,
 } from "@/contexts/workout-context";
 import { useCamera } from "@/hooks/use-camera";
-import { useFormChecker } from "@/hooks/use-form-checker";
-import { usePoseDetection } from "@/hooks/use-pose-detection";
-import { useVoiceFeedback } from "@/hooks/use-voice-feedback";
+import { useGeminiLive } from "@/hooks/use-gemini-live";
 
 const VALID_EXERCISES: ExerciseType[] = ["squat", "deadlift"];
 
@@ -33,136 +38,103 @@ function WorkoutContent({ exercise }: WorkoutContentProps) {
     useWorkout();
 
   // Camera setup
-  const { videoRef, isActive: cameraActive, error: cameraError, isLoading: cameraLoading, startCamera, stopCamera } =
-    useCamera();
-
-  // Pose detection
   const {
-    landmarks,
-    isReady: poseReady,
-    isLoading: poseLoading,
-    error: poseError,
-    initialize: initializePose,
-    detectPose,
-    destroy: destroyPose,
-  } = usePoseDetection();
+    videoRef,
+    isActive: cameraActive,
+    error: cameraError,
+    isLoading: cameraLoading,
+    startCamera,
+    stopCamera,
+  } = useCamera();
 
-  // Form checking
+  // Gemini Live for AI coaching
   const {
-    analysis,
-    repCount,
-    goodFormCount,
-    badFormCount,
-    allMistakes,
-    analyzeLandmarks,
-  } = useFormChecker(exercise);
+    connect: connectGemini,
+    disconnect: disconnectGemini,
+    connectionState,
+    isConnected,
+    startStreaming,
+    stopStreaming,
+    isStreaming,
+    isSpeaking,
+    isMicEnabled,
+    setMicEnabled,
+  } = useGeminiLive({
+    exercise,
+    onError: (error) => {
+      console.error("Gemini error:", error);
+      setGeminiError(error.message);
+    },
+  });
 
-  // Voice feedback
-  const { speakIssue, speakRepComplete, stop: stopSpeech, isEnabled: voiceEnabled, setEnabled: setVoiceEnabled } =
-    useVoiceFeedback();
+  // Manual rep tracking (Gemini will announce reps verbally, user can also track manually)
+  const [repCount, setRepCount] = useState(0);
+  const [goodFormCount, setGoodFormCount] = useState(0);
+  const [badFormCount, setBadFormCount] = useState(0);
+  const [geminiError, setGeminiError] = useState<string | null>(null);
 
-  // Video dimensions for overlay
-  const [videoDimensions, setVideoDimensions] = useState({ width: 640, height: 480 });
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  // Animation frame ref for detection loop
-  const animationRef = useRef<number | null>(null);
-  const lastDetectionRef = useRef<number>(0);
-
-  // Track previous counts for voice feedback
-  const prevRepCountRef = useRef(0);
-  const prevGoodFormCountRef = useRef(0);
-
-  // Handle video dimensions
-  useEffect(() => {
-    const updateDimensions = () => {
-      if (containerRef.current) {
-        const rect = containerRef.current.getBoundingClientRect();
-        setVideoDimensions({ width: rect.width, height: rect.height });
-      }
-    };
-
-    updateDimensions();
-    window.addEventListener("resize", updateDimensions);
-    return () => window.removeEventListener("resize", updateDimensions);
-  }, []);
-
-  // Initialize camera and pose detection when starting
+  // Initialize camera and Gemini when starting
   const handleStart = useCallback(async () => {
-    await startCamera();
-    initializePose();
-    startWorkout(exercise);
-  }, [startCamera, initializePose, startWorkout, exercise]);
+    setGeminiError(null);
+    try {
+      // Start camera first
+      await startCamera();
 
-  // Detection loop
-  useEffect(() => {
-    if (!state.isActive || state.isPaused || !cameraActive || !poseReady) {
-      return;
-    }
+      // Connect to Gemini
+      await connectGemini();
 
-    const runDetection = () => {
-      const now = performance.now();
-      // Limit to ~15 FPS for performance
-      if (now - lastDetectionRef.current >= 66) {
-        if (videoRef.current) {
-          detectPose(videoRef.current);
-        }
-        lastDetectionRef.current = now;
-      }
-      animationRef.current = requestAnimationFrame(runDetection);
-    };
-
-    animationRef.current = requestAnimationFrame(runDetection);
-
-    return () => {
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
-      }
-    };
-  }, [state.isActive, state.isPaused, cameraActive, poseReady, detectPose, videoRef]);
-
-  // Analyze landmarks when they change
-  useEffect(() => {
-    if (landmarks && state.isActive && !state.isPaused) {
-      const result = analyzeLandmarks(landmarks);
-
-      // Voice feedback for issues
-      if (result && result.issues.length > 0 && result.issues[0]) {
-        speakIssue(result.issues[0]);
+      // Start workout timer
+      startWorkout(exercise);
+    } catch (error) {
+      console.error("Failed to start workout:", error);
+      if (error instanceof Error) {
+        setGeminiError(error.message);
       }
     }
-  }, [landmarks, state.isActive, state.isPaused, analyzeLandmarks, speakIssue]);
+  }, [startCamera, connectGemini, startWorkout, exercise, setGeminiError]);
 
-  // Voice feedback when rep completes
+  // Start streaming when camera is active and Gemini is connected
   useEffect(() => {
-    if (repCount > prevRepCountRef.current) {
-      // Check if good form count increased - if so, this rep was good form
-      const wasGoodForm = goodFormCount > prevGoodFormCountRef.current;
-      speakRepComplete(wasGoodForm);
+    if (cameraActive && isConnected && state.isActive && !state.isPaused) {
+      const videoElement = videoRef.current;
+      if (videoElement) {
+        startStreaming(videoElement);
+      }
+    } else if (isStreaming && (state.isPaused || !state.isActive)) {
+      stopStreaming();
     }
-    prevRepCountRef.current = repCount;
-    prevGoodFormCountRef.current = goodFormCount;
-  }, [repCount, goodFormCount, speakRepComplete]);
+  }, [
+    cameraActive,
+    isConnected,
+    state.isActive,
+    state.isPaused,
+    startStreaming,
+    stopStreaming,
+    isStreaming,
+    videoRef,
+  ]);
 
   // Handle pause
   const handlePause = useCallback(() => {
     pauseWorkout();
-  }, [pauseWorkout]);
+    stopStreaming();
+  }, [pauseWorkout, stopStreaming]);
 
   // Handle resume
   const handleResume = useCallback(() => {
     resumeWorkout();
-  }, [resumeWorkout]);
+    const videoElement = videoRef.current;
+    if (videoElement && isConnected) {
+      startStreaming(videoElement);
+    }
+  }, [resumeWorkout, startStreaming, isConnected, videoRef]);
 
   // Handle stop - navigate to summary
   const handleStop = useCallback(() => {
-    // Stop detection
-    if (animationRef.current) {
-      cancelAnimationFrame(animationRef.current);
-    }
-    stopSpeech();
+    // Stop everything
+    stopStreaming();
+    disconnectGemini();
     stopCamera();
-    destroyPose();
     endWorkout();
 
     // Get workout summary data
@@ -172,39 +144,76 @@ function WorkoutContent({ exercise }: WorkoutContentProps) {
       goodFormReps: goodFormCount,
       badFormReps: badFormCount,
       durationSeconds: state.elapsedSeconds,
-      mistakes: allMistakes,
+      mistakes: [] as string[],
     };
 
     // Navigate to summary with data
-    router.push(`/workout/summary?data=${encodeURIComponent(JSON.stringify(summaryData))}`);
+    router.push(
+      `/workout/summary?data=${encodeURIComponent(JSON.stringify(summaryData))}`
+    );
   }, [
-    stopSpeech,
+    stopStreaming,
+    disconnectGemini,
     stopCamera,
-    destroyPose,
     endWorkout,
     exercise,
     repCount,
     goodFormCount,
     badFormCount,
     state.elapsedSeconds,
-    allMistakes,
     router,
   ]);
+
+  // Manual rep tracking
+  const addGoodRep = useCallback(() => {
+    setRepCount((prev) => prev + 1);
+    setGoodFormCount((prev) => prev + 1);
+  }, [setRepCount, setGoodFormCount]);
+
+  const addBadRep = useCallback(() => {
+    setRepCount((prev) => prev + 1);
+    setBadFormCount((prev) => prev + 1);
+  }, [setRepCount, setBadFormCount]);
+
+  const removeRep = useCallback(() => {
+    if (repCount > 0) {
+      setRepCount((prev) => prev - 1);
+      // Remove from good form if possible, otherwise from bad
+      if (goodFormCount > 0) {
+        setGoodFormCount((prev) => prev - 1);
+      } else if (badFormCount > 0) {
+        setBadFormCount((prev) => prev - 1);
+      }
+    }
+  }, [repCount, goodFormCount, badFormCount, setRepCount, setGoodFormCount, setBadFormCount]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
-      }
-      stopSpeech();
+      stopStreaming();
+      disconnectGemini();
       stopCamera();
-      destroyPose();
     };
-  }, [stopSpeech, stopCamera, destroyPose]);
+  }, [stopStreaming, disconnectGemini, stopCamera]);
 
-  const isInitializing = cameraLoading || poseLoading;
-  const hasError = cameraError || poseError;
+  const isInitializing = cameraLoading || connectionState === "connecting";
+  const hasError = cameraError || geminiError;
+
+  // Connection status display
+  const getConnectionStatus = () => {
+    switch (connectionState) {
+      case "connecting":
+        return { text: "Connecting to AI coach...", color: "text-yellow-500" };
+      case "connected":
+        return { text: "AI Coach Active", color: "text-green-500" };
+      case "error":
+        return { text: "Connection Error", color: "text-red-500" };
+      default:
+        return { text: "Disconnected", color: "text-muted-foreground" };
+    }
+  };
+
+  const connectionStatus = getConnectionStatus();
 
   return (
     <main className="flex-1 flex flex-col h-[calc(100vh-4rem)]">
@@ -219,18 +228,43 @@ function WorkoutContent({ exercise }: WorkoutContentProps) {
           </Button>
           <h1 className="text-xl font-semibold capitalize">{exercise}</h1>
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => setVoiceEnabled(!voiceEnabled)}
-          title={voiceEnabled ? "Mute voice feedback" : "Enable voice feedback"}
-        >
-          {voiceEnabled ? <Volume2 className="h-5 w-5" /> : <VolumeX className="h-5 w-5" />}
-        </Button>
+        <div className="flex items-center gap-2">
+          {/* Connection status */}
+          <div className="flex items-center gap-1.5">
+            {isConnected ? (
+              <Wifi className="h-4 w-4 text-green-500" />
+            ) : (
+              <WifiOff className="h-4 w-4 text-muted-foreground" />
+            )}
+            <span className={`text-xs ${connectionStatus.color}`}>
+              {connectionStatus.text}
+            </span>
+          </div>
+          {/* Speaking indicator */}
+          {isSpeaking && (
+            <span className="text-xs text-blue-500 animate-pulse">
+              Speaking...
+            </span>
+          )}
+          {/* Mic toggle */}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setMicEnabled(!isMicEnabled)}
+            title={isMicEnabled ? "Mute microphone" : "Enable microphone"}
+            disabled={!isConnected}
+          >
+            {isMicEnabled ? (
+              <Mic className="h-5 w-5" />
+            ) : (
+              <MicOff className="h-5 w-5" />
+            )}
+          </Button>
+        </div>
       </div>
 
       {/* Main content */}
-      <div className="flex-1 relative" ref={containerRef}>
+      <div className="flex-1 relative">
         {/* Camera view */}
         <CameraView
           ref={videoRef}
@@ -238,33 +272,25 @@ function WorkoutContent({ exercise }: WorkoutContentProps) {
           className="w-full h-full"
         />
 
-        {/* Pose overlay */}
-        {landmarks && cameraActive && (
-          <PoseOverlay
-            landmarks={landmarks}
-            width={videoDimensions.width}
-            height={videoDimensions.height}
-            isGoodForm={analysis?.isGoodForm ?? true}
-          />
-        )}
-
         {/* Loading overlay */}
         {isInitializing && (
           <div className="absolute inset-0 flex items-center justify-center bg-background/80">
             <div className="text-center">
               <Loader2 className="h-8 w-8 animate-spin mx-auto mb-2" />
               <p className="text-sm text-muted-foreground">
-                {cameraLoading ? "Starting camera..." : "Loading pose detection..."}
+                {cameraLoading
+                  ? "Starting camera..."
+                  : "Connecting to AI coach..."}
               </p>
             </div>
           </div>
         )}
 
         {/* Error overlay */}
-        {hasError && (
+        {hasError && !isInitializing && (
           <div className="absolute inset-0 flex items-center justify-center bg-background/80">
             <div className="text-center max-w-md px-4">
-              <p className="text-red-500 mb-4">{cameraError || poseError}</p>
+              <p className="text-red-500 mb-4">{cameraError || geminiError}</p>
               <Button onClick={handleStart}>Try Again</Button>
             </div>
           </div>
@@ -283,15 +309,63 @@ function WorkoutContent({ exercise }: WorkoutContentProps) {
               />
             </div>
 
-            {/* Form indicator - top left */}
-            {analysis && (
-              <div className="absolute top-4 left-4">
-                <FormIndicator
-                  isGoodForm={analysis.isGoodForm}
-                  issues={analysis.issues}
-                />
+            {/* AI Status indicator - top left */}
+            <div className="absolute top-4 left-4">
+              <div className="bg-background/90 backdrop-blur rounded-lg p-3 shadow-lg">
+                <div className="flex items-center gap-2 mb-2">
+                  {isConnected ? (
+                    <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                  ) : (
+                    <div className="w-2 h-2 rounded-full bg-red-500" />
+                  )}
+                  <span className="text-sm font-medium">
+                    {isConnected ? "AI Coach Active" : "AI Disconnected"}
+                  </span>
+                </div>
+                {isConnected && (
+                  <p className="text-xs text-muted-foreground">
+                    Watching your form in real-time
+                  </p>
+                )}
               </div>
-            )}
+            </div>
+
+            {/* Manual rep buttons - bottom left */}
+            <div className="absolute bottom-4 left-4">
+              <div className="bg-background/90 backdrop-blur rounded-lg p-2 shadow-lg">
+                <p className="text-xs text-muted-foreground mb-2 text-center">
+                  Manual Rep Count
+                </p>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={removeRep}
+                    disabled={repCount === 0}
+                  >
+                    <Minus className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={addGoodRep}
+                    className="bg-green-600 hover:bg-green-700"
+                  >
+                    <Plus className="h-4 w-4 mr-1" />
+                    Good
+                  </Button>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={addBadRep}
+                    className="bg-orange-600 hover:bg-orange-700"
+                  >
+                    <Plus className="h-4 w-4 mr-1" />
+                    Bad
+                  </Button>
+                </div>
+              </div>
+            </div>
           </>
         )}
       </div>

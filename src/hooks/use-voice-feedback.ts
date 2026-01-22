@@ -46,16 +46,21 @@ export function useVoiceFeedback(): UseVoiceFeedbackReturn {
       utterance.rate = 1.0;
       utterance.pitch = 1.0;
       utterance.volume = 1.0;
+      utterance.lang = "en-US"; // Always use English
 
-      // Try to use a clear, neutral voice
+      // Find an English voice - prefer Google/Natural voices, but accept any English voice
       const voices = window.speechSynthesis.getVoices();
-      const englishVoice = voices.find(
+      const preferredVoice = voices.find(
         (voice) =>
           voice.lang.startsWith("en") &&
           (voice.name.includes("Google") || voice.name.includes("Natural"))
       );
-      if (englishVoice) {
-        utterance.voice = englishVoice;
+      const anyEnglishVoice = voices.find((voice) => voice.lang.startsWith("en"));
+
+      if (preferredVoice) {
+        utterance.voice = preferredVoice;
+      } else if (anyEnglishVoice) {
+        utterance.voice = anyEnglishVoice;
       }
 
       utterance.onstart = () => setIsSpeaking(true);
